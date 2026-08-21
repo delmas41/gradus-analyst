@@ -183,6 +183,15 @@ export interface ChordAnalysis {
   readings: RomanNumeralReading[];
   tendencyTones: TendencyToneTag[];   // drawn from voiceLeadingTendencyTones.ts
   perspectives: Perspectives;
+  /** Present ONLY on slices inside a confirmed pedal-point run: the bass pc
+   *  sustained under the harmony, with its scale-degree label in the local
+   *  key ("1", "5", "b3"…). When the pedal is foreign to the sonority, the
+   *  reading in `primary`/`readings` is the UPPER structure — Beethoven 1
+   *  mvt 1 mm. 33-37 reads V⁷ with `pedal = { pc: 0, degree: "1" }`, the
+   *  "V7 (ped 1)" annotation convention (never a slash — that is reserved
+   *  for secondary functions). Absent for scores without pedals, so all
+   *  existing consumers see identical output — additive only. */
+  pedal?: { pc: number; degree: string };
 }
 
 // ─── Cadence + phrase + mode ─────────────────────────────────────────────────

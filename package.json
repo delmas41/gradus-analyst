@@ -1,13 +1,14 @@
 {
   "name": "gradus-analyst",
-  "version": "0.1.0",
-  "description": "Music theory analysis in TypeScript — Roman numerals, key detection, modulation and cadence classification, voice-leading checks. Reads MusicXML. No Python, runs anywhere JavaScript does.",
+  "version": "0.2.0",
+  "description": "Music theory analysis in TypeScript — Roman numerals, key detection, modulation and cadence classification, pedal points, voice-leading checks. Reads MusicXML. No Python, runs anywhere JavaScript does.",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./musicxml/parser": { "types": "./dist/musicxml/parser.d.ts", "default": "./dist/musicxml/parser.js" }
   },
   "files": ["dist", "README.md", "LICENSE"],
   "scripts": {
@@ -17,7 +18,7 @@
   },
   "keywords": [
     "music theory", "music analysis", "roman numeral analysis", "harmonic analysis",
-    "musicxml", "key detection", "modulation", "cadence", "voice leading",
+    "musicxml", "key detection", "modulation", "cadence", "pedal point", "voice leading",
     "counterpoint", "music21", "music", "notation", "tonal"
   ],
   "repository": { "type": "git", "url": "git+https://github.com/delmas41/gradus-analyst.git" },

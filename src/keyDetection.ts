@@ -300,6 +300,286 @@ export function analyzeKeyTrajectory(
   return out;
 }
 
+// ─── Region-scale local keys — Viterbi-smoothed per-measure trajectory ───────
+
+export interface KeyRegionEntry {
+  measure: number;
+  key: string;
+  /** Correlation of the CHOSEN key on this measure's window — not the raw
+   *  windowed winner's correlation, so a measure held in a region by the
+   *  switch penalty reports how well the region key actually fits it. */
+  confidence: number;
+}
+
+/**
+ * Per-measure local-key trajectory with global (Viterbi) smoothing. This is
+ * the intermediate tier between per-phrase keys and the ≥30-measure section
+ * detector: it exists because a 10–20 bar tonicized region falls between
+ * those two — too short to become a section, and invisible to phrase-mode
+ * when fermata segmentation yields one giant phrase (every orchestral
+ * movement). Independent per-measure decisions would flap; instead we score
+ * all 24 keys on a sliding window at every measure and find the single key
+ * path that maximizes total correlation minus a penalty per key change.
+ *
+ * The switch penalty IS the hysteresis: a candidate region only wins if its
+ * summed correlation advantage over staying put exceeds the cost of switching
+ * in and out (2 × penalty). With the defaults, a region needs roughly
+ * penalty/avg-advantage measures of evidence — ~4–8 bars for a clear
+ * modulation, unreachable for a one-bar applied chord. No minimum-length or
+ * delta gate is imposed beyond that; the geometry does the gating.
+ *
+ * Measures whose window holds no notes emit 0 for every key, so the path
+ * carries the surrounding key through rests instead of dropping to no-key.
+ */
+export function analyzeKeyRegionTrajectory(
+  score: Score,
+  opts: {
+    /** First/last measure of the span to analyze. Defaults to the score. */
+    measureStart?: number;
+    measureEnd?: number;
+    /** Half-window in measures (window = 2*halfWindow + 1). Default 1 —
+     *  narrow windows keep region boundaries sharp; the Viterbi smoothing
+     *  below supplies the stability a wider window would have bought. */
+    windowHalf?: number;
+    /** Cost (in summed-correlation units) of each key change along the
+     *  path. Default 3.2 — calibrated on the key-detection bench tune
+     *  half (see benchmarks/key-detection/). */
+    switchPenalty?: number;
+    /** Regions shorter than this many measures are merged into whichever
+     *  neighbor fits their windows better. The switch penalty already
+     *  suppresses WEAK drifts; this second hysteresis scale absorbs brief
+     *  but locally-strong colorations (a four-bar minore, an applied-chord
+     *  cluster) that an analyst reads through without changing key.
+     *  Default 10. */
+    minRegionMeasures?: number;
+    /** Chromatic-evidence gate. A modulation between closely-related keys
+     *  always introduces new pitch classes (C to F introduces Bb; C to G
+     *  introduces F#; C to A minor introduces G#). When a region's key
+     *  would add new scale tones relative to its predecessor's key but the
+     *  region's notes carry less than this fraction of their duration on
+     *  those tones, the "modulation" is a profile-drift artifact (the IV
+     *  and V scales overlap the tonic scale in 6 of 7 pcs, so windows can
+     *  drift a fifth without a single accidental changing) — the region is
+     *  relabeled with the predecessor's key. Keys whose scale adds nothing
+     *  new (minor home to relative major) are exempt: no evidence is
+     *  expected, so none is demanded. Default 0.01. Set 0 to disable. */
+    minNewPcFraction?: number;
+    /** Parallel-mode tiebreak. The major/minor profiles of one tonic
+     *  correlate closely on mixed material, and the aggregate read leans
+     *  minor when a major-mode theme sits next to minor-inflected
+     *  transition bars (the Brahms 3 S-theme failure). The mode of the
+     *  third the music actually sounds over the region's tonic is the
+     *  direct evidence: when the opposite third out-weighs the current
+     *  mode's third by this duration ratio, flip the region's mode.
+     *  Default 2. Set 0 to disable. */
+    modeFlipThirdRatio?: number;
+    profileName?: ProfileName;
+  } = {},
+): KeyRegionEntry[] {
+  const windowHalf = opts.windowHalf ?? 1;
+  const switchPenalty = opts.switchPenalty ?? 3.2;
+  const profileName = opts.profileName ?? DEFAULT_PROFILE;
+
+  const lastScoreMeasure = score.measureCount || score.notes.reduce((m, n) => Math.max(m, n.measure), 1);
+  const mStart = Math.max(1, opts.measureStart ?? 1);
+  const mEnd = Math.min(lastScoreMeasure, opts.measureEnd ?? lastScoreMeasure);
+  if (mEnd < mStart) return [];
+
+  // The 24 key states, each with its rotated reference profile.
+  const { major, minor } = PROFILES[profileName];
+  const states: Array<{ name: string; ref: number[] }> = [];
+  for (let tonic = 0; tonic < 12; tonic++) {
+    states.push({ name: preferredKeyName(tonic, 'major'), ref: rotate(major, tonic) });
+    states.push({ name: preferredKeyName(tonic, 'minor'), ref: rotate(minor, tonic) });
+  }
+
+  // Per-measure pc profiles once, then windows as running sums — O(notes)
+  // instead of re-filtering the note list for every measure.
+  const perMeasure: number[][] = [];
+  for (let m = 0; m <= mEnd + windowHalf; m++) perMeasure.push(new Array(12).fill(0));
+  for (const n of score.notes) {
+    if (n.midi === null || n.isRest) continue;
+    if (n.measure < mStart - windowHalf || n.measure > mEnd + windowHalf) continue;
+    const idx = Math.max(0, Math.min(perMeasure.length - 1, n.measure));
+    perMeasure[idx][((n.midi % 12) + 12) % 12] += Math.max(n.duration, 0);
+  }
+
+  const measures: number[] = [];
+  for (let m = mStart; m <= mEnd; m++) measures.push(m);
+
+  // Emission matrix: correlation of each key on each measure's window.
+  const emissions: number[][] = measures.map(m => {
+    const lo = Math.max(1, m - windowHalf);
+    const hi = Math.min(mEnd + windowHalf, m + windowHalf);
+    const win = new Array(12).fill(0);
+    for (let mm = lo; mm <= hi && mm < perMeasure.length; mm++) {
+      for (let pc = 0; pc < 12; pc++) win[pc] += perMeasure[mm][pc];
+    }
+    const total = win.reduce((a, b) => a + b, 0);
+    if (total === 0) return new Array(states.length).fill(0);
+    return states.map(s => pearson(win, s.ref));
+  });
+
+  // Viterbi. Because the transition cost is a flat penalty for ANY change,
+  // the inner max over predecessors reduces to "stay, or come from the best
+  // overall previous state minus the penalty" — O(states) per measure.
+  const S = states.length;
+  let dp = emissions[0].slice();
+  const back: Int16Array[] = [];
+  for (let t = 1; t < measures.length; t++) {
+    let bestPrev = 0;
+    for (let j = 1; j < S; j++) if (dp[j] > dp[bestPrev]) bestPrev = j;
+    const next = new Array<number>(S);
+    const bk = new Int16Array(S);
+    for (let k = 0; k < S; k++) {
+      const stay = dp[k];
+      const jump = dp[bestPrev] - switchPenalty;
+      if (stay >= jump) { next[k] = stay + emissions[t][k]; bk[k] = k; }
+      else { next[k] = jump + emissions[t][k]; bk[k] = bestPrev; }
+    }
+    back.push(bk);
+    dp = next;
+  }
+
+  let cur = 0;
+  for (let k = 1; k < S; k++) if (dp[k] > dp[cur]) cur = k;
+  const path = new Array<number>(measures.length);
+  path[measures.length - 1] = cur;
+  for (let t = measures.length - 2; t >= 0; t--) {
+    cur = back[t][cur];
+    path[t] = cur;
+  }
+
+  // Minimum-region merge: absorb sub-minimum regions into the neighbor
+  // whose key fits the region's own windows better (by summed emission).
+  // Iterate shortest-first so a chain of fragments collapses stably.
+  const minRegion = opts.minRegionMeasures ?? 10;
+  if (minRegion > 1) {
+    type Region = { start: number; end: number; state: number }; // t-indices
+    const buildRegions = (): Region[] => {
+      const rs: Region[] = [];
+      for (let t = 0; t < path.length; t++) {
+        const last = rs[rs.length - 1];
+        if (last && last.state === path[t]) last.end = t;
+        else rs.push({ start: t, end: t, state: path[t] });
+      }
+      return rs;
+    };
+    let regions = buildRegions();
+    while (regions.length > 1) {
+      let idx = -1;
+      let idxLen = Infinity;
+      for (let i = 0; i < regions.length; i++) {
+        const len = regions[i].end - regions[i].start + 1;
+        if (len < minRegion && len < idxLen) { idx = i; idxLen = len; }
+      }
+      if (idx < 0) break;
+      const r = regions[idx];
+      const left = idx > 0 ? regions[idx - 1].state : null;
+      const right = idx + 1 < regions.length ? regions[idx + 1].state : null;
+      const fit = (s: number | null): number => {
+        if (s === null) return -Infinity;
+        let sum = 0;
+        for (let t = r.start; t <= r.end; t++) sum += emissions[t][s];
+        return sum;
+      };
+      const winner = fit(left) >= fit(right) ? left! : right!;
+      for (let t = r.start; t <= r.end; t++) path[t] = winner;
+      regions = buildRegions();
+    }
+  }
+
+  // ── Post-passes on the region list ─────────────────────────────────────
+  // Both passes below read the region's own pitch content (not profile
+  // correlations), so they correct exactly the two failure modes profile
+  // correlation cannot see from inside: a scale-overlap drift and a
+  // mode tie. Region durations per pc come from the per-measure profiles.
+  const regionPcMass = (startT: number, endT: number): number[] => {
+    const mass = new Array(12).fill(0);
+    for (let t = startT; t <= endT; t++) {
+      const m = measures[t];
+      if (m >= perMeasure.length) continue;
+      for (let pc = 0; pc < 12; pc++) mass[pc] += perMeasure[m][pc];
+    }
+    return mass;
+  };
+  // Scale pc set for the gate: major = the 7 diatonic pcs; minor = natural
+  // minor plus the raised 7th, because a real minor region carries leading
+  // tones (and demanding one is exactly the relative-major/minor evidence
+  // we want — C major to A minor must show G#).
+  const scalePcsOf = (stateIdx: number): Set<number> => {
+    const tonic = Math.floor(stateIdx / 2);
+    const isMajor = stateIdx % 2 === 0;
+    const ivls = isMajor ? [0, 2, 4, 5, 7, 9, 11] : [0, 2, 3, 5, 7, 8, 10, 11];
+    return new Set(ivls.map(i => (tonic + i) % 12));
+  };
+
+  type PathRegion = { start: number; end: number; state: number };
+  const buildPathRegions = (): PathRegion[] => {
+    const rs: PathRegion[] = [];
+    for (let t = 0; t < path.length; t++) {
+      const last = rs[rs.length - 1];
+      if (last && last.state === path[t]) last.end = t;
+      else rs.push({ start: t, end: t, state: path[t] });
+    }
+    return rs;
+  };
+
+  // Chromatic-evidence gate: relabel a region to its predecessor's key
+  // when its own key's new scale tones are essentially absent from it.
+  const minNewPcFraction = opts.minNewPcFraction ?? 0.01;
+  if (minNewPcFraction > 0) {
+    let regions = buildPathRegions();
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (let i = 1; i < regions.length; i++) {
+        const prev = regions[i - 1];
+        const cur = regions[i];
+        if (prev.state === cur.state) continue;
+        const newPcs = [...scalePcsOf(cur.state)].filter(pc => !scalePcsOf(prev.state).has(pc));
+        if (newPcs.length === 0) continue; // no new tones expected — exempt
+        const mass = regionPcMass(cur.start, cur.end);
+        const total = mass.reduce((a, b) => a + b, 0);
+        if (total === 0) continue;
+        const newMass = newPcs.reduce((a, pc) => a + mass[pc], 0);
+        if (newMass / total < minNewPcFraction) {
+          for (let t = cur.start; t <= cur.end; t++) path[t] = prev.state;
+          regions = buildPathRegions();
+          changed = true;
+          break;
+        }
+      }
+    }
+  }
+
+  // Parallel-mode tiebreak: flip a region's mode when the music sounds the
+  // opposite third over the region's tonic decisively more often.
+  const modeFlipThirdRatio = opts.modeFlipThirdRatio ?? 2;
+  if (modeFlipThirdRatio > 0) {
+    for (const r of buildPathRegions()) {
+      const tonic = Math.floor(r.state / 2);
+      const isMajor = r.state % 2 === 0;
+      const mass = regionPcMass(r.start, r.end);
+      const majorThird = mass[(tonic + 4) % 12];
+      const minorThird = mass[(tonic + 3) % 12];
+      const flip = isMajor
+        ? minorThird > majorThird * modeFlipThirdRatio
+        : majorThird > minorThird * modeFlipThirdRatio;
+      if (flip) {
+        const flipped = tonic * 2 + (isMajor ? 1 : 0);
+        for (let t = r.start; t <= r.end; t++) path[t] = flipped;
+      }
+    }
+  }
+
+  return measures.map((m, t) => ({
+    measure: m,
+    key: states[path[t]].name,
+    confidence: emissions[t][path[t]],
+  }));
+}
+
 // ─── Tonicization vs modulation ──────────────────────────────────────────────
 
 export type KeyChangeKind = 'tonicization' | 'modulation' | 'none';

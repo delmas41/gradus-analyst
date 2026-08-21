@@ -73,10 +73,26 @@ test('runs with no Node-only globals — the package is runtime-agnostic', async
   // to work in a browser, a Worker and an edge function. A Node builtin
   // creeping into the analyzer would break all three silently, since the test
   // suite itself runs in Node and would never notice.
-  const { readdirSync, readFileSync } = await import('node:fs');
-  const dir = new URL('../dist/', import.meta.url).pathname;
-  const offenders = readdirSync(dir)
-    .filter((f) => f.endsWith('.js'))
-    .filter((f) => /require\(["']node:|from ["']node:(fs|path|os|child_process)/.test(readFileSync(dir + f, 'utf8')));
-  assert.deepEqual(offenders, [], 'no analyzer module may import a Node builtin');
+  const { readdirSync, readFileSync, statSync } = await import('node:fs');
+  const root = new URL('../dist/', import.meta.url).pathname;
+  const files = [];
+  const walk = (dir) => {
+    for (const name of readdirSync(dir)) {
+      const p = dir + name;
+      if (statSync(p).isDirectory()) walk(p + '/');
+      else if (p.endsWith('.js')) files.push(p);
+    }
+  };
+  walk(root);
+  // Census: an empty or half-missing dist/ must fail loudly, not pass by
+  // scanning nothing. The build emits one .js per src module.
+  assert.ok(files.length >= 20, `expected a full dist/ to scan, found ${files.length} files`);
+  // Any reference to a node: builtin is a violation, whatever the form:
+  // require('node:x'), from 'node:x', bare `import 'node:x'`, dynamic
+  // import('node:x'). (The first version of this guard matched only the
+  // require/from forms and was watched NOT failing on a planted bare import.)
+  const offenders = files.filter((p) =>
+    /(?:require\(|from\s+|import\s+|import\()["']node:/.test(readFileSync(p, 'utf8')),
+  );
+  assert.deepEqual(offenders.map((p) => p.slice(root.length)), [], 'no analyzer module may import a Node builtin');
 });

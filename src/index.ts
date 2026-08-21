@@ -15,9 +15,12 @@ export type { AnalyzeScoreOptions, SubmissionHints } from './analyze.js';
 // Re-exports for convenience — consumers can import from index instead of
 // reaching into individual module files.
 export { chordify } from './chordify.js';
-export { analyzeKey, analyzeKeyAt, analyzeKeyTrajectory, analyzeNotesKey, correlateKey, classifyKeyChange, detectModulations, detectKeySections, annotateRecapVariants, annotatePivotChords } from './keyDetection.js';
+export { analyzeKey, analyzeKeyAt, analyzeKeyTrajectory, analyzeKeyRegionTrajectory, analyzeNotesKey, correlateKey, classifyKeyChange, detectModulations, detectKeySections, annotateRecapVariants, annotatePivotChords } from './keyDetection.js';
 export { findPhraseBoundaries } from './phraseSegmentation.js';
-export { analyzeChord } from './romanNumeral.js';
+export { analyzeChord, identifyChord } from './romanNumeral.js';
+export type { ChordIdentity } from './romanNumeral.js';
+export { detectPedalRuns, pedalPcByChordIndex, pedalDegreeLabel, applyPedalReading } from './pedalPoint.js';
+export type { PedalRun } from './pedalPoint.js';
 export { classifyCadence, classifyCadences } from './cadence.js';
 export { scoreFromParseResult, compositionDataToScore, noteEntriesToScore } from './scoreModel.js';
 export type * from './types.js';

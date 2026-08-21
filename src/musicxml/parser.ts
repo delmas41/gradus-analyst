@@ -91,18 +91,95 @@ const xmlParser = new XMLParser({
   trimValues: true,
 });
 
+export interface MxlParseOptions {
+  /**
+   * Cap on the DECOMPRESSED size of any entry read from the archive.
+   *
+   * Zip inflation is attacker-controlled amplification: deflate reaches about
+   * 1000:1, so a 2 MB upload can expand toward 2 GB in a single string. Callers
+   * reading trusted local files (the score-page generator, the sketchbook
+   * importer) pass nothing and behave exactly as before; the public
+   * /api/v1/engraving/check route caps at 100 MB — the largest real score in
+   * the catalog (Holst, complete) inflates to 57 MB, so every legitimate score
+   * clears the cap with 2x headroom. Enforced DURING inflation via JSZip's
+   * internal stream, not by trusting the zip directory's declared sizes, which
+   * a hostile archive simply lies about.
+   */
+  maxDecompressedBytes?: number;
+}
+
+/** Thrown when an archive entry inflates past `maxDecompressedBytes`. */
+export class MxlDecompressionLimitError extends Error {
+  constructor(cap: number) {
+    super(`Compressed archive entry inflates past the ${Math.round(cap / 1e6)} MB decompression limit`);
+    this.name = 'MxlDecompressionLimitError';
+  }
+}
+
+/**
+ * `internalStream` is documented public JSZip API (streaming inflation with
+ * pause/resume) but the typings bundled with jszip 3.10 omit it — verified
+ * present at runtime. Typed narrowly here rather than casting to `any`, so a
+ * future JSZip upgrade that really removes it fails compilation in one place.
+ */
+interface JSZipStreaming {
+  internalStream(type: 'uint8array'): {
+    on(event: 'data', cb: (chunk: Uint8Array) => void): void;
+    on(event: 'error', cb: (err: Error) => void): void;
+    on(event: 'end', cb: () => void): void;
+    pause(): void;
+    resume(): void;
+  };
+}
+
+/** Inflate one zip entry to text, aborting the moment the cap is exceeded. */
+function inflateCapped(file: JSZip.JSZipObject, cap: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    let done = false;
+    const stream = (file as unknown as JSZipStreaming).internalStream('uint8array');
+    stream.on('data', (chunk: Uint8Array) => {
+      if (done) return;
+      total += chunk.length;
+      if (total > cap) {
+        done = true;
+        stream.pause();
+        reject(new MxlDecompressionLimitError(cap));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    stream.on('error', (err: Error) => {
+      if (!done) { done = true; reject(err); }
+    });
+    stream.on('end', () => {
+      if (done) return;
+      done = true;
+      const buf = new Uint8Array(total);
+      let off = 0;
+      for (const c of chunks) { buf.set(c, off); off += c.length; }
+      resolve(new TextDecoder().decode(buf));
+    });
+    stream.resume();
+  });
+}
+
 /**
  * Parse a .mxl (compressed MusicXML) buffer into structured data.
  */
-export async function parseMXL(buffer: ArrayBuffer): Promise<ParseResult> {
+export async function parseMXL(buffer: ArrayBuffer, opts?: MxlParseOptions): Promise<ParseResult> {
   const zip = await JSZip.loadAsync(buffer);
+  const cap = opts?.maxDecompressedBytes;
+  const read = (file: JSZip.JSZipObject): Promise<string> =>
+    cap ? inflateCapped(file, cap) : file.async('string');
 
   // Find the rootfile from META-INF/container.xml, or fall back to first .xml
   let xmlContent: string | null = null;
 
   const containerFile = zip.file('META-INF/container.xml');
   if (containerFile) {
-    const containerXml = await containerFile.async('string');
+    const containerXml = await read(containerFile);
     const container = xmlParser.parse(containerXml);
     const rootfiles = container?.container?.rootfiles?.rootfile;
     const rootfilePath = Array.isArray(rootfiles)
@@ -111,7 +188,7 @@ export async function parseMXL(buffer: ArrayBuffer): Promise<ParseResult> {
     if (rootfilePath) {
       const rootFile = zip.file(rootfilePath);
       if (rootFile) {
-        xmlContent = await rootFile.async('string');
+        xmlContent = await read(rootFile);
       }
     }
   }
@@ -120,7 +197,7 @@ export async function parseMXL(buffer: ArrayBuffer): Promise<ParseResult> {
   if (!xmlContent) {
     for (const [path, file] of Object.entries(zip.files)) {
       if (path.endsWith('.xml') && !path.includes('META-INF') && !file.dir) {
-        xmlContent = await file.async('string');
+        xmlContent = await read(file);
         break;
       }
     }

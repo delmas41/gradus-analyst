@@ -72,7 +72,7 @@ function uniqPcs(pcs: number[]): number[] {
 
 /** Try every pc as the chord root; for each, compute the intervals from root
  *  present in the chord. */
-interface ChordIdentity {
+export interface ChordIdentity {
   root: number;
   type: 'major' | 'minor' | 'diminished' | 'augmented' | 'dom7' | 'maj7' | 'min7' | 'halfdim7' | 'dim7' | 'minMaj7' | 'unknown';
   intervals: number[];
@@ -151,8 +151,10 @@ export const SEVENTH_PATTERNS: Record<'dom7' | 'maj7' | 'min7' | 'halfdim7' | 'd
  *  accounts for all four pcs beats a 3-note triad with one unaccounted note,
  *  even when the triad would be in root position. This prevents the common
  *  mis-classification where (e.g.) G♯-B-D-E in A minor reads as G♯ diminished
- *  triad (root inversion) instead of E dominant 7 (first inversion). */
-function identifyChord(pcs: number[], bassPc: number | null): ChordIdentity {
+ *  triad (root inversion) instead of E dominant 7 (first inversion).
+ *  Exported for the pedal-point detector, which needs the same "what would
+ *  this vertical be, and is the sustained bass one of its tones" judgment. */
+export function identifyChord(pcs: number[], bassPc: number | null): ChordIdentity {
   const u = uniqPcs(pcs);
   let best: ChordIdentity = {
     root: u[0] ?? 0,

@@ -21,10 +21,11 @@
 
 import type { Score, ScoreAnalysis, ChordAnalysis, PhraseRange, KeySection } from './types.js';
 import { chordify } from './chordify.js';
-import { analyzeKey, analyzeKeyTrajectory, analyzeNotesKey, correlateKey, detectKeySections, annotateRecapVariants, annotatePivotChords } from './keyDetection.js';
+import { analyzeKey, analyzeKeyTrajectory, analyzeKeyRegionTrajectory, analyzeNotesKey, correlateKey, detectKeySections, annotateRecapVariants, annotatePivotChords } from './keyDetection.js';
 import { findPhraseBoundaries } from './phraseSegmentation.js';
 import { analyzeChord } from './romanNumeral.js';
 import { classifyCadences } from './cadence.js';
+import { detectPedalRuns, pedalPcByChordIndex, applyPedalReading } from './pedalPoint.js';
 import { getScalePcs, isDiatonic } from './scale.js';
 
 export interface AnalyzeScoreOptions {
@@ -192,8 +193,33 @@ export function analyzeScore(
     // decisions. Also handle phrases that straddle a section boundary —
     // measures inside a section get the section's key, even if the phrase
     // as a whole was decided in the home key.
+    // A phrase longer than this is not a perceptual phrase — it means the
+    // fermata segmentation found nothing (orchestral movements). Inside such
+    // a span the single phrase-vs-home decision is meaningless: the span IS
+    // mostly home, so the delta gate always keeps home and every 10–20 bar
+    // tonicized region inside it inherits the global key (the bench's
+    // dominant "other" error class). Hand those spans to the region tier —
+    // a Viterbi-smoothed per-measure trajectory whose switch penalty
+    // provides the hysteresis the phrase gate provided here. Chorale-scale
+    // phrases (2–10 measures between fermatas) keep the phrase decision
+    // unchanged, which is what the theory-bench chorale guarantees pin.
+    const LONG_PHRASE_MEASURES = 16;
+
     const phraseKeys: Array<{ phraseIndex: number; key: string; confidence: number }> = [];
     for (const d of decisions) {
+      const span = d.phrase.measureEnd - d.phrase.measureStart + 1;
+      if (span > LONG_PHRASE_MEASURES) {
+        const regions = analyzeKeyRegionTrajectory(score, {
+          measureStart: d.phrase.measureStart,
+          measureEnd: d.phrase.measureEnd,
+        });
+        for (const r of regions) {
+          localKeyByMeasure.set(r.measure, r.key);
+          localKeys.push({ measure: r.measure, key: r.key, confidence: r.confidence });
+        }
+        phraseKeys.push({ phraseIndex: d.phrase.index, key: d.homeKey, confidence: d.homeFit });
+        continue;
+      }
       phraseKeys.push({ phraseIndex: d.phrase.index, key: d.chosenKey, confidence: d.chosenConf });
       for (let m = d.phrase.measureStart; m <= d.phrase.measureEnd; m++) {
         const sectionKey = sectionKeyByMeasure.get(m);
@@ -223,15 +249,29 @@ export function analyzeScore(
     }
   }
 
-  // 5. Per-chord RN analysis
+  // 5. Per-chord RN analysis — pedal-aware.
+  //
+  // Pedal runs are detected first, over the raw chord stream: a bass pc
+  // sustained across slices while the harmony above diverges from it (see
+  // pedalPoint.ts for the divergence rule and its negative cases). On a
+  // slice inside a confirmed run, the reading comes from the upper
+  // structure when the pedal is foreign to the full-set match (G⁷ over a
+  // tonic pedal reads V⁷, not '?'); the full-set reading survives when the
+  // pedal is one of its chord tones (I over 1̂ is just I). Non-pedal
+  // slices are untouched — identical output to the pre-pedal analyzer.
+  const pedalByIdx = pedalPcByChordIndex(detectPedalRuns(chordStream.chords));
   const chordAnalyses: ChordAnalysis[] = chordStream.chords.map((chord, i) => {
     const localKey = localKeyByMeasure.get(chord.measure) ?? overallKey.key;
     const next = i + 1 < chordStream.chords.length ? chordStream.chords[i + 1] : null;
-    return analyzeChord(chord, {
+    const opts = {
       key: localKey,
       nextChordPcs: next ? next.pcs : undefined,
       nextChord: next ?? undefined,
-    });
+    };
+    const full = analyzeChord(chord, opts);
+    const pedalPc = pedalByIdx.get(i);
+    if (pedalPc === undefined) return full;
+    return applyPedalReading(chord, full, pedalPc, opts);
   });
 
   // 6. Cadences — use the local key of the phrase end for each cadence.

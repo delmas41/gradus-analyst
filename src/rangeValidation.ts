@@ -30,29 +30,35 @@ export interface RangeWarning {
 
 // Practical ranges in concert pitch. Keys are lowercase partial-match tokens.
 // If a part name contains any token, that range applies. First match wins.
+// Tokens include Italian/German/French part names — "Flauto", "Violone",
+// "Corni in C" are the norm in orchestral sources, and an unmatched name
+// silently disables every instrument-aware check downstream (the engraving
+// checker flagged a violone for living in its own register because 'violone'
+// matched nothing). Matching is longest-token-wins, which is what keeps
+// 'violone' (7) from being eaten by the French 'violon' (6).
 const INSTRUMENT_RANGES: Array<InstrumentRange & { tokens: string[] }> = [
   // ── Strings ──────────────────────────────────────────────────────────────
-  { name: 'Violin',       tokens: ['violin'],        min: 55,  max: 103 }, // G3–B7
-  { name: 'Viola',        tokens: ['viola'],          min: 48,  max: 91  }, // C3–G6
-  { name: 'Cello',        tokens: ['cello', 'violoncello'], min: 36, max: 76 }, // C2–E5
-  { name: 'Double Bass',  tokens: ['bass', 'contrabass', 'double bass'], min: 28, max: 60 }, // E1–C4 (sounds 8vb)
+  { name: 'Violin',       tokens: ['violin', 'violino', 'violini', 'violon', 'geige'],        min: 55,  max: 103 }, // G3–B7
+  { name: 'Viola',        tokens: ['viola', 'viole', 'bratsche'],          min: 48,  max: 91  }, // C3–G6
+  { name: 'Cello',        tokens: ['cello', 'violoncello', 'violoncelle'], min: 36, max: 76 }, // C2–E5
+  { name: 'Double Bass',  tokens: ['bass', 'contrabass', 'double bass', 'violone', 'contrabbasso', 'kontrabass'], min: 28, max: 60 }, // E1–C4 (sounds 8vb)
   { name: 'Harp',         tokens: ['harp'],           min: 24,  max: 103 }, // C1–B7
   // ── Woodwinds ─────────────────────────────────────────────────────────────
-  { name: 'Flute',        tokens: ['flute'],          min: 60,  max: 98  }, // C4–D7
-  { name: 'Piccolo',      tokens: ['piccolo'],        min: 74,  max: 108 }, // D5–C8 (sounds 8va)
-  { name: 'Oboe',         tokens: ['oboe'],           min: 58,  max: 91  }, // Bb3–G6
+  { name: 'Flute',        tokens: ['flute', 'flauto', 'flauti', 'flöte', 'floete', 'flûte'],          min: 60,  max: 98  }, // C4–D7
+  { name: 'Piccolo',      tokens: ['piccolo', 'ottavino'],        min: 74,  max: 108 }, // D5–C8 (sounds 8va)
+  { name: 'Oboe',         tokens: ['oboe', 'oboi', 'hautbois'],           min: 58,  max: 91  }, // Bb3–G6
   { name: 'English Horn', tokens: ['english horn', 'cor anglais'], min: 52, max: 81 }, // E3–A5
   { name: 'Clarinet',     tokens: ['clarinet'],       min: 50,  max: 94  }, // D3–Bb6 (concert)
   { name: 'Bass Clarinet',tokens: ['bass clarinet'],  min: 38,  max: 77  }, // Bb1–F5 (concert)
-  { name: 'Bassoon',      tokens: ['bassoon'],        min: 34,  max: 75  }, // Bb1–Eb5
+  { name: 'Bassoon',      tokens: ['bassoon', 'fagott', 'fagotto', 'fagotti', 'basson'],        min: 34,  max: 75  }, // Bb1–Eb5
   { name: 'Contrabassoon',tokens: ['contrabassoon', 'contra bassoon'], min: 22, max: 53 }, // Bb0–F3
   { name: 'Soprano Sax',  tokens: ['soprano sax'],   min: 56,  max: 89  }, // Ab3–F6 (concert)
   { name: 'Alto Sax',     tokens: ['alto sax'],       min: 49,  max: 80  }, // Db3–Ab5 (concert)
   { name: 'Tenor Sax',    tokens: ['tenor sax'],      min: 44,  max: 76  }, // Ab2–E5 (concert)
   { name: 'Baritone Sax', tokens: ['baritone sax', 'bari sax'], min: 36, max: 68 }, // C2–Ab4 (concert)
   // ── Brass ─────────────────────────────────────────────────────────────────
-  { name: 'Horn',         tokens: ['horn', 'french horn'], min: 34, max: 77 }, // Bb1–F5 (concert)
-  { name: 'Trumpet',      tokens: ['trumpet'],        min: 55,  max: 82  }, // G3–Bb5 (concert)
+  { name: 'Horn',         tokens: ['horn', 'french horn', 'corno', 'corni', 'waldhorn'], min: 34, max: 77 }, // Bb1–F5 (concert)
+  { name: 'Trumpet',      tokens: ['trumpet', 'tromba', 'trombe', 'clarino', 'clarini', 'trompete', 'trompette'],        min: 55,  max: 82  }, // G3–Bb5 (concert)
   { name: 'Trombone',     tokens: ['trombone'],       min: 40,  max: 72  }, // E2–C5
   { name: 'Bass Trombone',tokens: ['bass trombone'],  min: 34,  max: 67  }, // Bb1–G4
   { name: 'Tuba',         tokens: ['tuba'],           min: 28,  max: 58  }, // E1–Bb3
