@@ -146,8 +146,9 @@ reading also carries `rnAscii` for grepping and diffing.
 
 ## Provenance
 
-Extracted from the analysis core of [Gradus](https://gradusmusic.com), a music
-composition curriculum, where it reads student work and checks the curriculum's
-own hand-authored score analyses. It is the same code, not a reimplementation.
+Gradus is a music-composition curriculum for homeschool families; it builds and gives away free music tools for AI agents. This
+library ([gradusmusic.com](https://gradusmusic.com)) is the analysis engine
+extracted from that curriculum, where it reads student work and checks the
+hand-authored score analyses. It is the same code, not a reimplementation.
 
 MIT licensed.

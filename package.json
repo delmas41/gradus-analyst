@@ -1,7 +1,7 @@
 {
   "name": "gradus-analyst",
   "version": "0.3.1",
-  "description": "The Gradus Harmonic Analyzer \u2014 music theory analysis in TypeScript: Roman numerals, key detection, modulation and cadence classification, pedal points, texture, voice-leading checks. Reads MusicXML. No Python, runs anywhere JavaScript does.",
+  "description": "The Gradus Harmonic Analyzer \u2014 music theory analysis in TypeScript: Roman numerals, key detection, modulation and cadence classification, pedal points, texture, voice-leading checks. Reads MusicXML. No Python, runs anywhere JavaScript does. From Gradus, the music-composition curriculum for homeschool families.",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
