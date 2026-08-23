@@ -1,7 +1,7 @@
 {
   "name": "gradus-analyst",
-  "version": "0.3.0",
-  "description": "The Gradus Harmonic Analyzer — music theory analysis in TypeScript: Roman numerals, key detection, modulation and cadence classification, pedal points, texture, voice-leading checks. Reads MusicXML. No Python, runs anywhere JavaScript does.",
+  "version": "0.3.1",
+  "description": "The Gradus Harmonic Analyzer \u2014 music theory analysis in TypeScript: Roman numerals, key detection, modulation and cadence classification, pedal points, texture, voice-leading checks. Reads MusicXML. No Python, runs anywhere JavaScript does.",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
@@ -48,7 +48,7 @@
     "url": "git+https://github.com/delmas41/gradus-analyst.git"
   },
   "homepage": "https://gradusmusic.com",
-  "author": "Sean Johnson — Gradus School of Music Composition",
+  "author": "Sean Johnson \u2014 Gradus School of Music Composition",
   "dependencies": {
     "fast-xml-parser": "^4.3.0",
     "jszip": "^3.10.0"
