@@ -1,8 +1,10 @@
 # gradus-analyst
 
-Music theory analysis in TypeScript. Roman numerals, key detection, modulation
-and cadence classification, voice-leading checks — from MusicXML or from a plain
-list of notes.
+**The Gradus Harmonic Analyzer** — music theory analysis in TypeScript. Roman
+numerals, key detection, modulation and cadence classification, voice-leading
+checks — from MusicXML or from a plain list of notes. The same engine powers the
+`theory_*` tools in the [@gradusmusic/notation-mcp](https://www.npmjs.com/package/@gradusmusic/notation-mcp)
+MCP server; this package is the library form.
 
 ```bash
 npm i gradus-analyst
