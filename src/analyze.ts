@@ -22,6 +22,7 @@
 import type { Score, ScoreAnalysis, ChordAnalysis, PhraseRange, KeySection } from './types.js';
 import { chordify } from './chordify.js';
 import { analyzeKey, analyzeKeyTrajectory, analyzeKeyRegionTrajectory, analyzeNotesKey, correlateKey, detectKeySections, annotateRecapVariants, annotatePivotChords } from './keyDetection.js';
+import { classifyMeasureTextures } from './texture.js';
 import { findPhraseBoundaries } from './phraseSegmentation.js';
 import { analyzeChord } from './romanNumeral.js';
 import { classifyCadences } from './cadence.js';
@@ -56,6 +57,7 @@ export function analyzeScore(
   opts: AnalyzeScoreOptions = {},
 ): ScoreAnalysis {
   const { localKeyHalfWindow = 2 } = opts;
+  const textures = classifyMeasureTextures(score);
 
   // 1. Chord stream
   const chordStream = chordify(score);
@@ -301,6 +303,7 @@ export function analyzeScore(
     overallKeyConfidence: overallKeyEst?.confidence ?? 0,
     keySections,
     localKeys,
+    textures,
     phrases,
     chordAnalyses,
     cadences,

@@ -18,8 +18,9 @@ const analysis = analyzeScore(score);
 analysis.overallKey;        // { key: 'C minor', mode: 'minor', fifths: -3, ... }
 analysis.chordAnalyses[0];  // { measure: 1, beat: 1, primary: 'i', tendencyTones: [...], ... }
 analysis.cadences;          // [{ measure: 24, type: 'PAC' }, ...]
-analysis.keySections;       // sustained modulations, with pivot chords and recap links
+analysis.keySections;       // sustained modulations, with pivots, recap links, sponsorship
 analysis.chordAnalyses[n].pedal;  // { pc: 0, degree: '1' } on slices over a pedal point
+analysis.textures;          // per-measure: 'chordal' | 'unison' | 'octaves' | 'bare-fifth' | ...
 ```
 
 ## Why this and not music21
@@ -50,8 +51,9 @@ as the author's numbers on the author's corpus, and rerun them if it matters.
 |---|---|
 | **Roman numerals** | 40+ chord categories: diatonic triads and sevenths in major and minor, secondary dominants (`V/x`, `V⁷/x`, `vii°/x`), Neapolitan, Italian/French/German augmented sixths, modal mixture, suspended and added-tone chords, incomplete sevenths, Picardy thirds |
 | **Key detection** | Krumhansl-Schmuckler with the Aarden-Essen profile, reported with a confidence |
-| **Hierarchical key** | Global key → sustained sections → per-phrase, with isolated short excursions smoothed out. Long spans with no fermatas to segment on get a Viterbi-smoothed per-measure region tier instead of inheriting the global key |
-| **Modulation** | Section boundaries, the pivot chord that links them, and recapitulation variants matched by transposed pitch-class profile |
+| **Hierarchical key** | Global key → sustained sections → per-phrase, with isolated short excursions smoothed out. Long spans with no fermatas to segment on get a Viterbi-smoothed per-measure region tier instead of inheriting the global key. Key names follow the score's spelling — a flat-spelled D♭ zone is `Gb major`, never `F# major` |
+| **Modulation** | Section boundaries, the pivot chord that links them, and recapitulation variants matched by transposed pitch-class profile. Each section reports `sponsorship`: `'cadential'` when a real dominant-with-leading-tone verticality lands on its tonic inside the section, `'unsponsored'` when the key is asserted by pitch statistics alone |
+| **Texture** | Per-measure classification from per-onset verticality: `chordal`, `unison`, `octaves`, `bare-fifth`, `bare-third`, `dyad`, `silence`. A bar that never stacks two pitch classes is a line, and its Roman numeral is advisory |
 | **Pedal points** | Detected by divergence, not sustain: a bass pitch class held (or re-struck — timpani count) while the harmony above moves away from it. On those slices the reading is the upper structure, with the pedal reported alongside as `pedal: { pc, degree }` — never folded into a wrong inversion |
 | **Cadences** | PAC, IAC, HC, DC, Plagal, Phrygian, per phrase |
 | **Tendency tones** | Leading tones, chordal sevenths, suspensions, cadential 6-4, pedal points — tagged per chord |
@@ -64,14 +66,31 @@ as the author's numbers on the author's corpus, and rerun them if it matters.
 A chord-template match cannot read a pedal point: aggregate every sounding
 pitch over a sustained foreign bass and you get either a wrong inversion or an
 unlabelable cluster. This library detects the pedal first and then reads the
-upper structure as the chord — the opening of Beethoven's First (mm. 33–37,
-cellos, basses and timpani holding C under a complete G⁷) comes back as `V⁷`
-with `pedal: { pc: 0, degree: '1' }`, the "V7 (ped 1)" convention, rather than
-as a mystery chord. The definition is the divergence, not the sustain: four
-bars of root-position tonic is not a pedal, and neither is a walking bass.
-music21's Roman-numeral path has no equivalent of this — a factual gap as of
-music21 9.x, easy to check against your own scores rather than taking this
-paragraph's word for it.
+upper structure as the chord — in the opening of Beethoven's First (mm. 33–38,
+cellos, basses and timpani holding C while the harmony above alternates tonic
+and dominant), the dominant bars come back as `V` with
+`pedal: { pc: 0, degree: '1' }`, the "V (ped 1)" convention, rather than as a
+mystery chord over a wrong bass. The definition is the divergence, not the
+sustain: four bars of root-position tonic is not a pedal, and neither is a
+walking bass. music21's Roman-numeral path has no equivalent of this — a
+factual gap as of music21 9.x, easy to check against your own scores rather
+than taking this paragraph's word for it.
+
+### Bare textures
+
+The dual failure mode: a bar of octave 8ths on D and A — Beethoven's Ninth
+opens with ten of them — satisfies a "D5" chord template, and a one-voice
+arpeggio visits three pitch classes without ever sounding two at once. Both
+would come back labelled as chords from any bar-level pitch aggregate.
+`analysis.textures` classifies every measure from its **per-onset**
+verticality instead: what actually sounds together, weighted by duration. A
+bar that never stacks two pitch classes is `unison` or `octaves`; two classes
+a fifth apart are `bare-fifth`; the Roman numeral for such bars is still
+emitted but should be treated as advisory — prose built on these readings
+renders them "(unison)", "(bare 5th)", not as chords. The classifications
+were adjudicated against a 384-item human review of orchestral scores
+(Beethoven, Brahms, Bruckner, Dvořák, Tchaikovsky symphonies) before
+shipping.
 
 ## Three ways in
 

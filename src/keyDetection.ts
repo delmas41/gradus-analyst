@@ -167,9 +167,41 @@ const PC_TO_MINOR_NAME: Record<number, string> = {
   6: 'F#', 7: 'G',  8: 'G#', 9: 'A',  10: 'Bb', 11: 'B',
 };
 
-function preferredKeyName(pc: number, mode: 'major' | 'minor'): string {
-  const root = (mode === 'major' ? PC_TO_MAJOR_NAME : PC_TO_MINOR_NAME)[pc] ?? NOTE_NAMES[pc];
+/** Enharmonic alternates for tonics whose spelling genuinely depends on
+ *  context. First entry is the canonical (fewest-accidentals) name. */
+const AMBIGUOUS_MAJOR: Record<number, [string, string]> = {
+  1: ['Db', 'C#'], 3: ['Eb', 'D#'], 6: ['F#', 'Gb'], 8: ['Ab', 'G#'], 10: ['Bb', 'A#'],
+};
+const AMBIGUOUS_MINOR: Record<number, [string, string]> = {
+  1: ['C#', 'Db'], 3: ['Eb', 'D#'], 6: ['F#', 'Gb'], 8: ['G#', 'Ab'], 10: ['Bb', 'A#'],
+};
+const isFlatName = (n: string) => n.includes('b');
+
+function preferredKeyName(pc: number, mode: 'major' | 'minor', spellingBias: number = 0): string {
+  let root = (mode === 'major' ? PC_TO_MAJOR_NAME : PC_TO_MINOR_NAME)[pc] ?? NOTE_NAMES[pc];
+  // The score's own notation votes: a window spelled in flats must not be
+  // named "F# major" (the Db-zone comedy from the 2026-08 review). Bias is
+  // (flat accidentals − sharp accidentals) among the analyzed notes; ±3 is
+  // enough to overrule the canonical name, small enough that conventionally
+  // spelled music never flips.
+  const alts = (mode === 'major' ? AMBIGUOUS_MAJOR : AMBIGUOUS_MINOR)[pc];
+  if (alts && Math.abs(spellingBias) >= 3) {
+    const wantFlat = spellingBias > 0;
+    const match = alts.find((a) => isFlatName(a) === wantFlat);
+    if (match) root = match;
+  }
   return `${root} ${mode}`;
+}
+
+/** (flats − sharps) among the notated accidentals of these notes. */
+function spellingBiasOf(notes: Note[]): number {
+  let flats = 0, sharps = 0;
+  for (const n of notes) {
+    if (n.isRest) continue;
+    if (n.pitch.includes('b')) flats++;
+    else if (n.pitch.includes('#')) sharps++;
+  }
+  return flats - sharps;
 }
 
 /**
@@ -189,6 +221,7 @@ export function analyzeNotesKey(
   if (totalDuration === 0) return null;
 
   const { major, minor } = PROFILES[profileName];
+  const bias = spellingBiasOf(notes);
 
   let bestKey = '';
   let bestMode: 'major' | 'minor' = 'major';
@@ -207,7 +240,7 @@ export function analyzeNotesKey(
       [minCorr, 'minor'],
     ];
     for (const [corr, mode] of candidates) {
-      const name = preferredKeyName(tonic, mode);
+      const name = preferredKeyName(tonic, mode, bias);
       if (corr > bestCorr) {
         secondCorr = bestCorr;
         secondKey = bestKey;
@@ -573,11 +606,41 @@ export function analyzeKeyRegionTrajectory(
     }
   }
 
-  return measures.map((m, t) => ({
+  const entries = measures.map((m, t) => ({
     measure: m,
     key: states[path[t]].name,
     confidence: emissions[t][path[t]],
   }));
+
+  // ── Score-spelled key names (0.3.0) ─────────────────────────────────────
+  // The Viterbi states carry canonical names (F# over Gb, C# over Db). Rename
+  // each decided run of a spelling-ambiguous key from ITS OWN notes'
+  // notation, so a flat-notated Db-zone region is never labeled F# major
+  // while a genuinely sharp-side passage keeps its canonical name.
+  let runStart = 0;
+  const renameRun = (from: number, to: number) => {
+    const keyName = entries[from].key;
+    const km = /^([A-G][b#]?) (major|minor)$/.exec(keyName);
+    if (!km) return;
+    const tonicPc = keyNameToPc(km[1]);
+    if (tonicPc < 0) return;
+    const mode = km[2] as 'major' | 'minor';
+    const loM = entries[from].measure;
+    const hiM = entries[to].measure;
+    const runNotes = score.notes.filter((n) => !n.isRest && n.measure >= loM && n.measure <= hiM);
+    const renamed = preferredKeyName(tonicPc, mode, spellingBiasOf(runNotes));
+    if (renamed !== keyName) {
+      for (let i = from; i <= to; i++) entries[i] = { ...entries[i], key: renamed };
+    }
+  };
+  for (let i = 1; i <= entries.length; i++) {
+    if (i === entries.length || entries[i].key !== entries[runStart].key) {
+      renameRun(runStart, i - 1);
+      runStart = i;
+    }
+  }
+
+  return entries;
 }
 
 // ─── Tonicization vs modulation ──────────────────────────────────────────────
@@ -989,6 +1052,73 @@ export function detectKeySections(
     }
     section.measureStart = leftEdge;
     section.measureEnd = rightEdge;
+  }
+
+
+  // ── Cadential sponsorship (analyst 0.3.0) ─────────────────────────────────
+  // A windowed-Krumhansl section is a statistical reading until a real V→I
+  // event in the section's key is found inside it. "Real" means (audit-
+  // tightened, 2026-08-22): the leading tone carries at least half a beat of
+  // weight AND sounds SIMULTANEOUSLY with the dominant root at some instant
+  // (a melodic passing 7̂ does not sponsor), the dominant side carries real
+  // weight, and the tonic side answers with 1̂ plus a chord mate. Both
+  // adjacent-measure pairs AND the two halves of a single measure are tested,
+  // so an intra-bar V→i cadence sponsors too. Sections without such an event
+  // are 'unsponsored' — emitted, but marked as pitch-statistics-only.
+  for (const sec of sections) {
+    const secPc = keyNameToPc(sec.key.split(' ')[0]);
+    if (secPc < 0) { continue; }
+    const dominantPc = (secPc + 7) % 12;
+    const leadingPc = (secPc + 11) % 12;
+    const thirdPc = (secPc + (/(minor)$/.test(sec.key) ? 3 : 4)) % 12;
+    type TNote = { pc: number; start: number; end: number; dur: number };
+    const notesOf = (m: number): TNote[] => {
+      const out: TNote[] = [];
+      for (const n of score.notes) {
+        if (n.isRest || n.midi === null || n.measure !== m) continue;
+        const pcv = ((n.midi % 12) + 12) % 12;
+        out.push({ pc: pcv, start: n.beat, end: n.beat + Math.max(n.duration, 0.001), dur: Math.max(n.duration, 0) });
+      }
+      return out;
+    };
+    const weightsOf = (ns: TNote[]): Map<number, number> => {
+      const w = new Map<number, number>();
+      for (const n of ns) w.set(n.pc, (w.get(n.pc) ?? 0) + n.dur);
+      return w;
+    };
+    const hasDominantVerticality = (ns: TNote[]): boolean =>
+      ns.some((a) => a.pc === leadingPc && ns.some((b) =>
+        b.pc === dominantPc && a.start < b.end - 1e-6 && b.start < a.end - 1e-6));
+    const sponsors = (domNotes: TNote[], tonNotes: TNote[]): boolean => {
+      if (!domNotes.length || !tonNotes.length) return false;
+      const wa = weightsOf(domNotes);
+      const wb = weightsOf(tonNotes);
+      const ta = [...wa.values()].reduce((x, y) => x + y, 0);
+      const tb = [...wb.values()].reduce((x, y) => x + y, 0);
+      if (!ta || !tb) return false;
+      const leading = wa.get(leadingPc) ?? 0;
+      const domSide = (wa.get(dominantPc) ?? 0) + leading;
+      const tonicSide = wb.get(secPc) ?? 0;
+      const hasThirdOrFifth = ((wb.get(thirdPc) ?? 0) + (wb.get(dominantPc) ?? 0)) > 0;
+      return leading >= 0.5 && domSide / ta >= 0.2 && tonicSide / tb >= 0.2
+        && hasThirdOrFifth && hasDominantVerticality(domNotes);
+    };
+    let sponsorMeasure: number | undefined;
+    for (let m = sec.measureStart; m <= sec.measureEnd && sponsorMeasure === undefined; m++) {
+      const cur = notesOf(m);
+      // (a) measure-pair cadence: dominant bar → tonic bar
+      if (m < sec.measureEnd && sponsors(cur, notesOf(m + 1))) { sponsorMeasure = m; break; }
+      // (b) intra-bar cadence: the bar's first half → its second half
+      if (cur.length) {
+        const barEnd = Math.max(...cur.map((n) => n.end));
+        const mid = (1 + barEnd) / 2;
+        const firstHalf = cur.filter((n) => n.start < mid);
+        const secondHalf = cur.filter((n) => n.start >= mid);
+        if (sponsors(firstHalf, secondHalf)) { sponsorMeasure = m; break; }
+      }
+    }
+    sec.sponsorship = sponsorMeasure !== undefined ? 'cadential' : 'unsponsored';
+    if (sponsorMeasure !== undefined) sec.sponsorMeasure = sponsorMeasure;
   }
 
   return sections;

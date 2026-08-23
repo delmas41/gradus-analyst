@@ -37,3 +37,6 @@ export { parseXmlString, parseMxlBuffer, parseXmlToRaw, parseMxlToRaw } from './
 
 // ── V2: Extended pitch utilities ──────────────────────────────────────────────
 export { midiToPitch, intervalName, transposePitch, letterIndex, letterFromIndex } from './pitch.js';
+
+export { classifyMeasureTextures } from './texture.js';
+export type { MeasureTexture, TextureReading } from './texture.js';

@@ -187,8 +187,8 @@ export interface ChordAnalysis {
    *  sustained under the harmony, with its scale-degree label in the local
    *  key ("1", "5", "b3"…). When the pedal is foreign to the sonority, the
    *  reading in `primary`/`readings` is the UPPER structure — Beethoven 1
-   *  mvt 1 mm. 33-37 reads V⁷ with `pedal = { pc: 0, degree: "1" }`, the
-   *  "V7 (ped 1)" annotation convention (never a slash — that is reserved
+   *  mvt 1 mm. 35-36 read V over `pedal = { pc: 0, degree: "1" }`, the
+   *  "V (ped 1)" annotation convention (never a slash — that is reserved
    *  for secondary functions). Absent for scores without pedals, so all
    *  existing consumers see identical output — additive only. */
   pedal?: { pc: number; degree: string };
@@ -314,6 +314,16 @@ export interface KeySection {
   pivotChordInNewKey?: string;
   /** Same chord's reading in the PREVIOUS key area. */
   pivotChordInOldKey?: string;
+  /** Whether a dominant-to-tonic event in the section's key was actually
+   *  found inside the section. Window-Krumhansl asserts keys from pitch
+   *  statistics alone; a section with no cadential sponsorship (no V-with-
+   *  leading-tone landing on 1^) is a statistical reading, not an
+   *  established key, and downstream consumers should say so. Added for
+   *  analyst 0.3.0 after the 2026-08 review found unsponsored sections
+   *  (Eb-major over minor-station chains; F#-major over a Db zone). */
+  sponsorship?: 'cadential' | 'unsponsored';
+  /** First measure whose V→I signature sponsored the section (when cadential). */
+  sponsorMeasure?: number;
 }
 
 export interface ScoreAnalysis {
@@ -336,4 +346,9 @@ export interface ScoreAnalysis {
   cadences: Cadence[];
   /** Optional — populated only when the modal analyzer is run. */
   modes?: Array<{ phraseIndex: number; analysis: ModalAnalysis }>;
+  /** Per-measure texture from per-onset verticality (analyst 0.3.0). A bar
+   *  that never stacks two pitch classes is a LINE — its Roman-numeral
+   *  reading is advisory, and prose should render it "(unison)" /
+   *  "(bare 5th)" per the review conventions. */
+  textures?: Array<{ measure: number; texture: string; maxSimultaneousPcs: number; distinctPcsInBar: number }>;
 }
